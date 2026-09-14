@@ -33,7 +33,7 @@ So the only flag you ever need is `--profile`, same as the AWS CLI itself.
 ## Install
 
 ```bash
-git clone https://github.com/Abhineet0904/aws-recon.git
+git clone https://github.com/Abhineet0904/AWSrecon.git
 cd AWSrecon
 pip install -r requirements.txt --break-system-packages   # Kali/Debian needs this flag
 ```
