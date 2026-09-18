@@ -41,7 +41,7 @@ import json
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     import boto3
@@ -111,7 +111,7 @@ def extract_identity(item):
     name = first_present(item, NAME_KEYS)
     if name:
         return name
-    return json.dumps(item)[:80]
+    return json.dumps(item, default=str)[:80]
 
 
 # --------------------------------------------------------------------------
@@ -288,6 +288,19 @@ def print_table(rows, headers):
         print(fmt_row(row))
 
 
+# Hardcoded list of all standard AWS regions (used as fallback when
+# ec2:DescribeRegions is denied). Update this list as AWS adds new regions.
+ALL_AWS_REGIONS = [
+    "af-south-1", "ap-east-1", "ap-northeast-1", "ap-northeast-2",
+    "ap-northeast-3", "ap-south-1", "ap-south-2", "ap-southeast-1",
+    "ap-southeast-2", "ap-southeast-3", "ap-southeast-4", "ca-central-1",
+    "ca-west-1", "eu-central-1", "eu-central-2", "eu-north-1", "eu-south-1",
+    "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1",
+    "me-central-1", "me-south-1", "sa-east-1", "us-east-1", "us-east-2",
+    "us-west-1", "us-west-2",
+]
+
+
 def get_regions(session, requested):
     """Resolve final region list based on user flags."""
     if requested:
@@ -295,11 +308,16 @@ def get_regions(session, requested):
     try:
         ec2 = session.client("ec2", region_name=session.region_name or "us-east-1")
         resp = ec2.describe_regions(AllRegions=False)
-        return sorted(r["RegionName"] for r in resp["Regions"])
+        regions = sorted(r["RegionName"] for r in resp["Regions"])
+        print(f"{C.B}    ec2:DescribeRegions succeeded — {len(regions)} regions found.{C.END}")
+        return regions
     except Exception:
-        # No ec2:DescribeRegions permission (or no creds for that region yet)
-        # -- fall back to the profile's configured/default region only.
-        return [session.region_name or "us-east-1"]
+        # ec2:DescribeRegions is denied (common for restricted profiles).
+        # Fall back to the hardcoded list of all known AWS regions so
+        # --all-regions still works without that permission.
+        print(f"{C.Y}    ec2:DescribeRegions denied — using built-in region list "
+              f"({len(ALL_AWS_REGIONS)} regions).{C.END}")
+        return ALL_AWS_REGIONS
 
 
 def run_check(session, check, region):
@@ -509,7 +527,7 @@ def main():
             json.dump({
                 "profile": args.profile,
                 "identity": ident,
-                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
                 "regions": regions,
                 "results": results,
             }, f, indent=2, default=str)
