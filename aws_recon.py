@@ -254,9 +254,12 @@ SERVICE_CHECKS = [
 
     # ── ECS: additional reads ────────────────────────────────────────────────
     dict(service="ecs", client="ecs", method="list_task_definitions",   key="taskDefinitionArns", paginate=True),
-    dict(service="ecs", client="ecs", method="list_tasks",              key="taskArns",           paginate=True),
-    dict(service="ecs", client="ecs", method="list_services",           key="serviceArns",        paginate=True),
-    dict(service="ecs", client="ecs", method="list_container_instances",key="containerInstanceArns", paginate=True),
+    dict(service="ecs", client="ecs", method="list_tasks",              key="taskArns",           paginate=True, probe=True,
+         label="ecs:ListTasks [READ PROBE]"),
+    dict(service="ecs", client="ecs", method="list_services",           key="serviceArns",        paginate=True, probe=True,
+         label="ecs:ListServices [READ PROBE]"),
+    dict(service="ecs", client="ecs", method="list_container_instances",key="containerInstanceArns", paginate=True, probe=True,
+         label="ecs:ListContainerInstances [READ PROBE]"),
     # ── ECS: write probes ────────────────────────────────────────────────────
     dict(service="ecs", client="ecs", method="run_task",               probe=True, write=True,
          kwargs={"cluster": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"},
