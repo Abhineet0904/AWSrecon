@@ -59,7 +59,7 @@ python3 aws_recon.py --profile ABC --full
 # Save full machine-readable output too
 python3 aws_recon.py --profile ABC --json report.json
 
-# See every service key it knows how to check
+# List all supported services
 python3 aws_recon.py --list-services
 ```
 
