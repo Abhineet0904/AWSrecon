@@ -88,4 +88,4 @@ python3 aws_recon.py --list-services
 
 ## ⚠️ Use responsibly
 
-Only run this against AWS accounts/credentials you own or are explicitly authorized to test. Enumeration is read-only but can still trigger CloudTrail/GuardDuty alerting, and unauthorized access to systems you don't own is illegal in most jurisdictions regardless of which API calls you make.
+Only run this against AWS accounts/credentials you own or are explicitly authorized to test. AWS API calls can still trigger CloudTrail, GuardDuty, or other security monitoring alerts, including the permission probes performed by this tool.
