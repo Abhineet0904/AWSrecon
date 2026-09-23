@@ -17,8 +17,9 @@ python3 aws_recon.py --profile ABC
 
 ## Why
 
-- **[Pacu](https://github.com/RhinoSecurityLabs/pacu)** is powerful but module-based - you run each service check one at a time from its interactive shell.
-- **[enumerate-iam](https://github.com/andresriancho/enumerate-iam)** enumerates AWS permissions by taking credential values directly (`--access_key`, `--secret_key`, and `--session_token`), and does not accept an AWS CLI profile directly.
+Used other tools designed for this purpose but :
+- Either they are powerful but module-based - you run each service check one at a time from its interactive shell.
+- Or they enumerate AWS permissions by taking credential values directly (`--access_key`, `--secret_key`, and `--session_token`), and do not accept an AWS CLI profile directly.
 
 `aws_recon.py` instead accepts an AWS CLI profile and lets the AWS SDK resolve credentials, supporting configurations such as temporary credentials, role-based profiles, credential_process, and SSO without manually extracting credential values.
 
