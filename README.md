@@ -18,15 +18,9 @@ python3 aws_recon.py --profile ABC
 ## Why
 
 - **[Pacu](https://github.com/RhinoSecurityLabs/pacu)** is powerful but module-based — you run each service check one at a time from its interactive shell.
-- **[enumerate-iam](https://github.com/andresriancho/enumerate-iam)** does a single-shot scan, but only accepts raw `--access-key`/`--secret-key`, so it can't be used with STS session-token creds, `assume-role` profiles, or SSO profiles without manually pulling the keys out first.
+- **[enumerate-iam](https://github.com/andresriancho/enumerate-iam)** enumerates AWS permissions by taking credential values directly (`--access_key`, `--secret_key`, and `--session_token`), and does not accept an AWS CLI profile directly. In practice, it is designed around temporary STS credentials and does not work with long-term IAM credentials.
 
-`aws_recon.py` instead opens a `boto3.Session(profile_name=...)`, which parses `~/.aws/credentials` and `~/.aws/config` **exactly the way the `aws` CLI binary does** — including:
-
-- Long-term access key / secret key profiles
-- Temporary credentials (`aws_access_key_id` + `aws_secret_access_key` + `aws_session_token`)
-- `role_arn` + `source_profile` assume-role chains
-- `credential_process` profiles
-- `sso_*` profiles (after `aws sso login`)
+`aws_recon.py` instead accepts an AWS CLI profile and lets the AWS SDK resolve credentials, supporting configurations such as temporary credentials, role-based profiles, credential_process, and SSO without manually extracting credential values.
 
 So the only flag you ever need is `--profile`, same as the AWS CLI itself.
 
