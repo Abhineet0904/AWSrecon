@@ -2,30 +2,8 @@
 """
 aws_recon.py - Enumerate every AWS resource/service visible to a given
 AWS CLI profile (static keys OR temporary STS session-token creds),
-in one shot, using nothing but --profile.
+in one shot, using nothing but --profile flag.
 
-Why this exists
-----------------
-`aws <service> list-x --profile ABC` has to be run over and over, once per
-service, to figure out what a set of credentials can actually see.
-Tools like Pacu need you to run modules one at a time; enumerate-iam only
-takes raw --access-key/--secret-key (no session-token / SSO / assume-role
-profile support). This script instead opens a boto3.Session(profile_name=...)
--- which parses ~/.aws/credentials + ~/.aws/config exactly the way the
-`aws` CLI binary does, including aws_session_token, source_profile chains,
-role_arn/credential_process, and sso_* profiles -- and then hammers a large
-list of read-only "list/describe" calls across ~50 services, catching
-AccessDenied vs UnauthorizedOperation vs everything else, so you get a
-single consolidated report of what's reachable.
-
-Usage
------
-    python3 aws_recon.py --profile ABC
-    python3 aws_recon.py --profile ABC --all-regions
-    python3 aws_recon.py --profile ABC --region us-east-1 --region eu-west-1
-    python3 aws_recon.py --profile ABC --services s3,iam,lambda,ec2
-    python3 aws_recon.py --profile ABC --json out.json
-    python3 aws_recon.py --list-services
 
 Legal / use note
 -----------------
