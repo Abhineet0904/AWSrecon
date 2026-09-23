@@ -73,7 +73,7 @@ python3 aws_recon.py --list-services
 ## What it does
 
 1. Calls `sts:GetCallerIdentity` first, so you immediately know which account/identity/ARN the profile resolves to (and fails fast with a clear error if the creds are missing/expired).
-2. Fans out **141 checks** across **44 services** (IAM, S3, EC2, Lambda, RDS, DynamoDB, ECS, EKS, CloudFormation, SNS, SQS, CloudWatch Logs, KMS, Secrets Manager, SSM, ELBv2, Auto Scaling, API Gateway, CloudTrail, Config, Redshift, ElastiCache, EFS, SageMaker, Glue, Athena, CodeBuild, CodePipeline, ECR, GuardDuty, WAFv2, ACM, Backup, Transfer, Batch, Step Functions, EventBridge, Firehose, OpenSearch, Route 53, CloudFront, SES, Organizations, and more) using a thread pool.
+2. Currently runs **141 checks** across **44 services** (IAM, S3, EC2, Lambda, RDS, DynamoDB, ECS, EKS, CloudFormation, SNS, SQS, CloudWatch Logs, KMS, Secrets Manager, SSM, ELBv2, Auto Scaling, API Gateway, CloudTrail, Config, Redshift, ElastiCache, EFS, SageMaker, Glue, Athena, CodeBuild, CodePipeline, ECR, GuardDuty, WAFv2, ACM, Backup, Transfer, Batch, Step Functions, EventBridge, Firehose, OpenSearch, Route 53, CloudFront, SES, Organizations, and more) using a thread pool.
 3. For each service, runs two types of checks:
    - **Read checks** — `List*` / `Describe*` / `Get*` calls that return actual resources with their ARNs.
    - **Write/permission probes** — attempts calls like `run_task`, `update_service`, `put_object`, `attach_user_policy`, etc. with dummy/nonexistent resource IDs to confirm whether the permission exists, *without actually modifying anything*. Results are labelled `[WRITE]` or `[READ]` in the output.
