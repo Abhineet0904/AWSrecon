@@ -65,15 +65,15 @@ python3 aws_recon.py --list-services
 
 ## Example
 
-![Screenshot 1](screenshots/Screenshot 2026-09-22 212559.png)
+![Screenshot 1](screenshots/Screenshot_2026-09-22_212559.png)
 
-![Screenshot 2](screenshots/Screenshot 2026-09-22 212639.png)
+![Screenshot 2](screenshots/Screenshot_2026-09-22_212639.png)
 
-![Screenshot 3](screenshots/Screenshot 2026-09-22 212748.png)
+![Screenshot 3](screenshots/Screenshot_2026-09-22_212748.png)
 
-![Screenshot 4](screenshots/Screenshot 2026-09-22 212828.png)
+![Screenshot 4](screenshots/Screenshot_2026-09-22_212828.png)
 
-![Screenshot 5](screenshots/Screenshot 2026-09-22 212845.png)
+![Screenshot 5](screenshots/Screenshot_2026-09-22_212845.png)
 
 ## What it does
 
