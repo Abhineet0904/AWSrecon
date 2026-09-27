@@ -2,7 +2,7 @@
 """
 aws_recon.py - Enumerate every AWS resource/service visible to a given
 AWS CLI profile (static keys OR temporary STS session-token creds),
-in one shot, using nothing but --profile flag.
+or using the default boto3 credential chain when no profile is supplied.
 
 
 Legal / use note
@@ -238,6 +238,7 @@ SERVICE_CHECKS = [
          label="ecs:ListServices [READ PROBE]"),
     dict(service="ecs", client="ecs", method="list_container_instances",key="containerInstanceArns", paginate=True, probe=True,
          label="ecs:ListContainerInstances [READ PROBE]"),
+
     # ── ECS: write probes ────────────────────────────────────────────────────
     dict(service="ecs", client="ecs", method="run_task",               probe=True, write=True,
          kwargs={"cluster": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"},
@@ -272,6 +273,7 @@ SERVICE_CHECKS = [
     dict(service="ec2", client="ec2", method="describe_internet_gateways",         key="InternetGateways",               paginate=True),
     dict(service="ec2", client="ec2", method="describe_network_interfaces",        key="NetworkInterfaces",              paginate=True),
     dict(service="ec2", client="ec2", method="describe_iam_instance_profile_associations", key="IamInstanceProfileAssociations", paginate=True),
+
     # ── EC2: write probes (DryRun=True is natively safe) ────────────────────
     dict(service="ec2", client="ec2", method="run_instances",          probe=True, write=True,
          kwargs={"DryRun": True, "MinCount": 1, "MaxCount": 1, "ImageId": "ami-00000000000000001"},
@@ -302,6 +304,7 @@ SERVICE_CHECKS = [
     dict(service="lambda", client="lambda", method="list_aliases", key="Aliases", paginate=True,
          kwargs={"FunctionName": "__awsrecon_probe__"}, probe=True,
          label="lambda:ListAliases [READ PROBE]"),
+
     # ── Lambda: write probes ─────────────────────────────────────────────────
     dict(service="lambda", client="lambda", method="update_function_code",          probe=True, write=True,
          kwargs={"FunctionName": "awsrecon-probe-nonexistent"},
@@ -336,9 +339,10 @@ SERVICE_CHECKS = [
          global_svc=True, probe=True,
          kwargs={"RoleName": "__awsrecon_probe__"},
          label="IAM GetRole [READ PROBE]"),
+
     # ── IAM: write probes ────────────────────────────────────────────────────
     dict(service="iam", client="iam", method="create_user",           probe=True, write=True, global_svc=True,
-         kwargs={"UserName": "a" * 129},   # exceeds 64-char limit → ValidationError before creation
+         kwargs={"UserName": "a" * 129},
          label="iam:CreateUser [WRITE PROBE]"),
     dict(service="iam", client="iam", method="create_role",           probe=True, write=True, global_svc=True,
          kwargs={"RoleName": "a" * 129, "AssumeRolePolicyDocument": "{}"},
@@ -383,6 +387,7 @@ SERVICE_CHECKS = [
     dict(service="rds", client="rds", method="describe_db_subnet_groups",    key="DBSubnetGroups",    paginate=True),
     dict(service="rds", client="rds", method="describe_db_parameter_groups", key="DBParameterGroups", paginate=True),
     dict(service="rds", client="rds", method="describe_db_snapshots",        key="DBSnapshots",       paginate=True),
+
     # ── RDS: write probes ────────────────────────────────────────────────────
     dict(service="rds", client="rds", method="modify_db_instance",    probe=True, write=True,
          kwargs={"DBInstanceIdentifier": "__awsrecon_probe__"},
@@ -435,7 +440,7 @@ SERVICE_CHECKS = [
 
     # ── CloudFormation: write probes ─────────────────────────────────────────
     dict(service="cloudformation", client="cloudformation", method="create_stack", probe=True, write=True,
-         kwargs={"StackName": "awsrecon-probe-stack", "TemplateBody": "a" * 51201},  # exceeds 51200-byte limit
+         kwargs={"StackName": "awsrecon-probe-stack", "TemplateBody": "a" * 51201},
          label="cloudformation:CreateStack [WRITE PROBE]"),
     dict(service="cloudformation", client="cloudformation", method="delete_stack", probe=True, write=True,
          kwargs={"StackName": "__awsrecon_probe__"},
@@ -470,7 +475,7 @@ SERVICE_CHECKS = [
          kwargs={"TopicArn": "arn:aws:sns:us-east-1:000000000000:probe", "Message": "probe"},
          label="sns:Publish [WRITE PROBE]"),
     dict(service="sns", client="sns", method="create_topic",              probe=True, write=True,
-         kwargs={"Name": "a" * 257},  # exceeds 256-char limit
+         kwargs={"Name": "a" * 257},
          label="sns:CreateTopic [WRITE PROBE]"),
 
     # ── SQS: write probes ─────────────────────────────────────────────────────
@@ -652,9 +657,10 @@ def run_check(session, check, region):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Enumerate all AWS resources/services visible to a given AWS CLI profile.")
+        description="Enumerate all AWS resources/services visible to a given AWS CLI profile or the default boto3 credential chain.")
     ap.add_argument("--profile", help="AWS CLI profile name from ~/.aws/credentials + ~/.aws/config "
-                                       "(supports static keys, session-token creds, assume-role, SSO)")
+                                       "(supports static keys, session-token creds, assume-role, SSO). "
+                                       "If omitted, use the default boto3 credential chain.")
     ap.add_argument("--region", action="append",
                      help="Region to scan (repeatable). Default: profile's default region.")
     ap.add_argument("--all-regions", action="store_true",
@@ -678,11 +684,14 @@ def main():
         print("\n".join(keys))
         return
 
-    if not args.profile:
-        ap.error("--profile is required (see --list-services for a dry run without it)")
-
+    # Use a named AWS profile when supplied. Otherwise, allow boto3 to use
+    # its normal credential provider chain, including EC2 instance-role
+    # credentials obtained through instance metadata.
     try:
-        session = boto3.Session(profile_name=args.profile)
+        if args.profile:
+            session = boto3.Session(profile_name=args.profile)
+        else:
+            session = boto3.Session()
     except ProfileNotFound as e:
         sys.exit(f"[!] {e}\n    Check the profile name in ~/.aws/credentials and ~/.aws/config.")
 
@@ -690,7 +699,12 @@ def main():
     checks = [c for c in SERVICE_CHECKS if not wanted or c["service"] in wanted]
 
     # --- Step 1: confirm identity first, fail fast with a clear message ---
-    print(f"{C.B}{C.BOLD}[*] Resolving identity for profile '{args.profile}'...{C.END}")
+    if args.profile:
+        identity_source = f"profile '{args.profile}'"
+    else:
+        identity_source = "default AWS credential chain"
+
+    print(f"{C.B}{C.BOLD}[*] Resolving identity using {identity_source}...{C.END}")
     try:
         sts = session.client("sts", region_name=session.region_name or "us-east-1")
         ident = sts.get_caller_identity()
@@ -698,8 +712,11 @@ def main():
         print(f"{C.G}    ARN     : {ident['Arn']}{C.END}")
         print(f"{C.G}    UserId  : {ident['UserId']}{C.END}\n")
     except NoCredentialsError:
-        sys.exit(f"[!] No credentials found for profile '{args.profile}'. "
-                  f"Check ~/.aws/credentials.")
+        if args.profile:
+            sys.exit(f"[!] No credentials found for profile '{args.profile}'. "
+                     f"Check ~/.aws/credentials.")
+        else:
+            sys.exit("[!] No AWS credentials found in the default credential chain.")
     except ClientError as e:
         sys.exit(f"[!] sts:GetCallerIdentity failed -- credentials appear invalid/expired: {e}")
 
@@ -716,7 +733,7 @@ def main():
             for r in regions:
                 jobs.append((check, r))
 
-    results = []  # list of dicts
+    results = []
     lock = threading.Lock()
 
     def worker(check, region):
