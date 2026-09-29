@@ -4,7 +4,6 @@ aws_recon.py - Enumerate every AWS resource/service visible to a given
 AWS CLI profile (static keys OR temporary STS session-token creds),
 or using the default boto3 credential chain when no profile is supplied.
 
-
 Legal / use note
 -----------------
 Only point this at accounts/credentials you own or are explicitly
@@ -38,10 +37,10 @@ except ImportError:
 # Terminal colors (Kali-friendly, degrade gracefully if not a tty)
 # --------------------------------------------------------------------------
 class C:
-    G = "\033[92m"   # green  - accessible
-    R = "\033[91m"   # red    - denied
-    Y = "\033[93m"   # yellow - error / not applicable
-    B = "\033[94m"   # blue   - headers
+    G = "\033[92m"  # green  - accessible
+    R = "\033[91m"  # red    - denied
+    Y = "\033[93m"  # yellow - error / not applicable
+    B = "\033[94m"  # blue   - headers
     BOLD = "\033[1m"
     END = "\033[0m"
 
@@ -71,6 +70,7 @@ NAME_KEYS = [
     "RestApiId", "PipelineName", "ProjectName", "DeliveryStreamName",
     "CacheClusterId", "FileSystemId", "DetectorId", "NotebookInstanceName",
     "WebACLId", "BackupVaultName", "ServerId", "StateMachineArn", "Permission",
+    "Key",
 ]
 
 
@@ -100,420 +100,285 @@ def extract_identity(item):
 #   kwargs      : extra kwargs for the call (e.g. Scope=Local for IAM policies)
 #   global_svc  : True if this service is not region-scoped (only queried once)
 #   paginate    : if the operation supports a paginator, use it to get everything
+#   probe       : True if this is a permission probe rather than a real enum call
+#   write       : True if the underlying API call is a mutating action
 # --------------------------------------------------------------------------
 SERVICE_CHECKS = [
     # --- Identity / account-wide ---
-    dict(service="sts", client="sts", method="get_caller_identity", key=None,
-         global_svc=True, label="STS Caller Identity"),
+    dict(service="sts", client="sts", method="get_caller_identity", key=None, global_svc=True, label="STS Caller Identity"),
 
     # --- IAM (global) ---
-    dict(service="iam", client="iam", method="list_users", key="Users",
-         global_svc=True, paginate=True),
-    dict(service="iam", client="iam", method="list_roles", key="Roles",
-         global_svc=True, paginate=True),
-    dict(service="iam", client="iam", method="list_groups", key="Groups",
-         global_svc=True, paginate=True),
-    dict(service="iam", client="iam", method="list_policies", key="Policies",
-         kwargs={"Scope": "Local"}, global_svc=True, paginate=True),
-    dict(service="iam", client="iam", method="list_instance_profiles",
-         key="InstanceProfiles", global_svc=True, paginate=True),
-    dict(service="iam", client="iam", method="list_access_keys",
-         key="AccessKeyMetadata", global_svc=True, paginate=True,
-         label="IAM Access Keys (own user)"),
-    dict(service="iam", client="iam", method="get_account_summary",
-         key=None, global_svc=True, label="IAM Account Summary"),
+    dict(service="iam", client="iam", method="list_users", key="Users", global_svc=True, paginate=True),
+    dict(service="iam", client="iam", method="list_roles", key="Roles", global_svc=True, paginate=True),
+    dict(service="iam", client="iam", method="list_groups", key="Groups", global_svc=True, paginate=True),
+    dict(service="iam", client="iam", method="list_policies", key="Policies", kwargs={"Scope": "Local"}, global_svc=True, paginate=True),
+    dict(service="iam", client="iam", method="list_instance_profiles", key="InstanceProfiles", global_svc=True, paginate=True),
+    dict(service="iam", client="iam", method="list_access_keys", key="AccessKeyMetadata", global_svc=True, paginate=True, label="IAM Access Keys (own user)"),
+    dict(service="iam", client="iam", method="get_account_summary", key=None, global_svc=True, label="IAM Account Summary"),
 
     # --- S3 (global) ---
-    dict(service="s3", client="s3", method="list_buckets", key="Buckets",
-         global_svc=True),
+    dict(service="s3", client="s3", method="list_buckets", key="Buckets", global_svc=True),
 
     # --- Regional compute/network/storage ---
-    dict(service="ec2", client="ec2", method="describe_instances",
-         key="Reservations", nested_key="Instances", paginate=True),
-    dict(service="ec2", client="ec2", method="describe_vpcs", key="Vpcs",
-         paginate=True),
-    dict(service="ec2", client="ec2", method="describe_subnets",
-         key="Subnets", paginate=True),
-    dict(service="ec2", client="ec2", method="describe_security_groups",
-         key="SecurityGroups", paginate=True),
-    dict(service="ec2", client="ec2", method="describe_volumes",
-         key="Volumes", paginate=True),
-    dict(service="ec2", client="ec2", method="describe_snapshots",
-         key="Snapshots", kwargs={"OwnerIds": ["self"]}, paginate=True),
-    dict(service="ec2", client="ec2", method="describe_key_pairs",
-         key="KeyPairs"),
-    dict(service="ec2", client="ec2", method="describe_images",
-         key="Images", kwargs={"Owners": ["self"]}),
+    dict(service="ec2", client="ec2", method="describe_instances", key="Reservations", nested_key="Instances", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_vpcs", key="Vpcs", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_subnets", key="Subnets", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_security_groups", key="SecurityGroups", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_volumes", key="Volumes", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_snapshots", key="Snapshots", kwargs={"OwnerIds": ["self"]}, paginate=True),
+    dict(service="ec2", client="ec2", method="describe_key_pairs", key="KeyPairs"),
+    dict(service="ec2", client="ec2", method="describe_images", key="Images", kwargs={"Owners": ["self"]}),
 
-    dict(service="lambda", client="lambda", method="list_functions",
-         key="Functions", paginate=True),
-    dict(service="rds", client="rds", method="describe_db_instances",
-         key="DBInstances", paginate=True),
-    dict(service="rds", client="rds", method="describe_db_clusters",
-         key="DBClusters", paginate=True),
-    dict(service="dynamodb", client="dynamodb", method="list_tables",
-         key="TableNames", paginate=True),
-    dict(service="ecs", client="ecs", method="list_clusters",
-         key="clusterArns", paginate=True),
-    dict(service="eks", client="eks", method="list_clusters",
-         key="clusters", paginate=True),
-    dict(service="cloudformation", client="cloudformation",
-         method="list_stacks", key="StackSummaries", paginate=True,
-         kwargs={"StackStatusFilter": [
-             "CREATE_COMPLETE", "UPDATE_COMPLETE", "ROLLBACK_COMPLETE"]}),
-    dict(service="sns", client="sns", method="list_topics",
-         key="Topics", paginate=True),
-    dict(service="sqs", client="sqs", method="list_queues",
-         key="QueueUrls"),
-    dict(service="logs", client="logs", method="describe_log_groups",
-         key="logGroups", paginate=True),
-    dict(service="kms", client="kms", method="list_keys", key="Keys",
-         paginate=True),
-    dict(service="secretsmanager", client="secretsmanager",
-         method="list_secrets", key="SecretList", paginate=True),
-    dict(service="ssm", client="ssm", method="describe_parameters",
-         key="Parameters", paginate=True),
-    dict(service="elbv2", client="elbv2",
-         method="describe_load_balancers", key="LoadBalancers",
-         paginate=True, label="ELBv2 Load Balancers"),
-    dict(service="autoscaling", client="autoscaling",
-         method="describe_auto_scaling_groups", key="AutoScalingGroups",
-         paginate=True),
-    dict(service="apigateway", client="apigateway", method="get_rest_apis",
-         key="items"),
-    dict(service="cloudtrail", client="cloudtrail",
-         method="describe_trails", key="trailList"),
-    dict(service="config", client="config",
-         method="describe_configuration_recorders",
-         key="ConfigurationRecorders"),
-    dict(service="redshift", client="redshift",
-         method="describe_clusters", key="Clusters", paginate=True),
-    dict(service="elasticache", client="elasticache",
-         method="describe_cache_clusters", key="CacheClusters",
-         paginate=True),
-    dict(service="efs", client="efs", method="describe_file_systems",
-         key="FileSystems", paginate=True),
-    dict(service="sagemaker", client="sagemaker",
-         method="list_notebook_instances", key="NotebookInstances",
-         paginate=True),
-    dict(service="glue", client="glue", method="get_databases",
-         key="DatabaseList", paginate=True),
-    dict(service="athena", client="athena", method="list_work_groups",
-         key="WorkGroups", paginate=True),
-    dict(service="codebuild", client="codebuild", method="list_projects",
-         key="projects", paginate=True),
-    dict(service="codepipeline", client="codepipeline",
-         method="list_pipelines", key="pipelines", paginate=True),
-    dict(service="ecr", client="ecr", method="describe_repositories",
-         key="repositories", paginate=True),
-    dict(service="guardduty", client="guardduty", method="list_detectors",
-         key="DetectorIds", paginate=True),
-    dict(service="wafv2", client="wafv2", method="list_web_acls",
-         key="WebACLs", kwargs={"Scope": "REGIONAL"}),
-    dict(service="acm", client="acm", method="list_certificates",
-         key="CertificateSummaryList", paginate=True),
-    dict(service="backup", client="backup", method="list_backup_vaults",
-         key="BackupVaultList", paginate=True),
-    dict(service="transfer", client="transfer", method="list_servers",
-         key="Servers", paginate=True),
-    dict(service="batch", client="batch",
-         method="describe_compute_environments",
-         key="computeEnvironments", paginate=True),
-    dict(service="stepfunctions", client="stepfunctions",
-         method="list_state_machines", key="stateMachines",
-         paginate=True),
-    dict(service="events", client="events", method="list_rules",
-         key="Rules", paginate=True, label="EventBridge Rules"),
-    dict(service="firehose", client="firehose",
-         method="list_delivery_streams", key="DeliveryStreamNames"),
-    dict(service="es", client="es",
-         method="list_domain_names", key="DomainNames",
-         label="OpenSearch/Elasticsearch Domains"),
+    dict(service="lambda", client="lambda", method="list_functions", key="Functions", paginate=True),
+    dict(service="rds", client="rds", method="describe_db_instances", key="DBInstances", paginate=True),
+    dict(service="rds", client="rds", method="describe_db_clusters", key="DBClusters", paginate=True),
+    dict(service="dynamodb", client="dynamodb", method="list_tables", key="TableNames", paginate=True),
+    dict(service="ecs", client="ecs", method="list_clusters", key="clusterArns", paginate=True),
+    dict(service="eks", client="eks", method="list_clusters", key="clusters", paginate=True),
+    dict(service="cloudformation", client="cloudformation", method="list_stacks", key="StackSummaries", paginate=True,
+         kwargs={"StackStatusFilter": ["CREATE_COMPLETE", "UPDATE_COMPLETE", "ROLLBACK_COMPLETE"]}),
+    dict(service="sns", client="sns", method="list_topics", key="Topics", paginate=True),
+    dict(service="sqs", client="sqs", method="list_queues", key="QueueUrls"),
+    dict(service="logs", client="logs", method="describe_log_groups", key="logGroups", paginate=True),
+    dict(service="kms", client="kms", method="list_keys", key="Keys", paginate=True),
+    dict(service="secretsmanager", client="secretsmanager", method="list_secrets", key="SecretList", paginate=True),
+    dict(service="ssm", client="ssm", method="describe_parameters", key="Parameters", paginate=True),
+    dict(service="elbv2", client="elbv2", method="describe_load_balancers", key="LoadBalancers", paginate=True, label="ELBv2 Load Balancers"),
+    dict(service="autoscaling", client="autoscaling", method="describe_auto_scaling_groups", key="AutoScalingGroups", paginate=True),
+    dict(service="apigateway", client="apigateway", method="get_rest_apis", key="items"),
+    dict(service="cloudtrail", client="cloudtrail", method="describe_trails", key="trailList"),
+    dict(service="config", client="config", method="describe_configuration_recorders", key="ConfigurationRecorders"),
+    dict(service="redshift", client="redshift", method="describe_clusters", key="Clusters", paginate=True),
+    dict(service="elasticache", client="elasticache", method="describe_cache_clusters", key="CacheClusters", paginate=True),
+    dict(service="efs", client="efs", method="describe_file_systems", key="FileSystems", paginate=True),
+    dict(service="sagemaker", client="sagemaker", method="list_notebook_instances", key="NotebookInstances", paginate=True),
+    dict(service="glue", client="glue", method="get_databases", key="DatabaseList", paginate=True),
+    dict(service="athena", client="athena", method="list_work_groups", key="WorkGroups", paginate=True),
+    dict(service="codebuild", client="codebuild", method="list_projects", key="projects", paginate=True),
+    dict(service="codepipeline", client="codepipeline", method="list_pipelines", key="pipelines", paginate=True),
+    dict(service="ecr", client="ecr", method="describe_repositories", key="repositories", paginate=True),
+    dict(service="guardduty", client="guardduty", method="list_detectors", key="DetectorIds", paginate=True),
+    dict(service="wafv2", client="wafv2", method="list_web_acls", key="WebACLs", kwargs={"Scope": "REGIONAL"}),
+    dict(service="acm", client="acm", method="list_certificates", key="CertificateSummaryList", paginate=True),
+    dict(service="backup", client="backup", method="list_backup_vaults", key="BackupVaultList", paginate=True),
+    dict(service="transfer", client="transfer", method="list_servers", key="Servers", paginate=True),
+    dict(service="batch", client="batch", method="describe_compute_environments", key="computeEnvironments", paginate=True),
+    dict(service="stepfunctions", client="stepfunctions", method="list_state_machines", key="stateMachines", paginate=True),
+    dict(service="events", client="events", method="list_rules", key="Rules", paginate=True, label="EventBridge Rules"),
+    dict(service="firehose", client="firehose", method="list_delivery_streams", key="DeliveryStreamNames"),
+    dict(service="es", client="es", method="list_domain_names", key="DomainNames", label="OpenSearch/Elasticsearch Domains"),
 
-    # ── ECS: additional reads ────────────────────────────────────────────────
-    dict(service="ecs", client="ecs", method="list_task_definitions",   key="taskDefinitionArns", paginate=True),
-    dict(service="ecs", client="ecs", method="list_tasks",              key="taskArns",           paginate=True, probe=True,
-         label="ecs:ListTasks [READ PROBE]"),
-    dict(service="ecs", client="ecs", method="list_services",           key="serviceArns",        paginate=True, probe=True,
-         label="ecs:ListServices [READ PROBE]"),
-    dict(service="ecs", client="ecs", method="list_container_instances",key="containerInstanceArns", paginate=True, probe=True,
-         label="ecs:ListContainerInstances [READ PROBE]"),
+    # -- ECS: additional reads --
+    dict(service="ecs", client="ecs", method="list_task_definitions", key="taskDefinitionArns", paginate=True),
+    dict(service="ecs", client="ecs", method="list_tasks", key="taskArns", paginate=True, probe=True, label="ecs:ListTasks [READ PROBE]"),
+    dict(service="ecs", client="ecs", method="list_services", key="serviceArns", paginate=True, probe=True, label="ecs:ListServices [READ PROBE]"),
+    dict(service="ecs", client="ecs", method="list_container_instances", key="containerInstanceArns", paginate=True, probe=True, label="ecs:ListContainerInstances [READ PROBE]"),
 
-    # ── ECS: write probes ────────────────────────────────────────────────────
-    dict(service="ecs", client="ecs", method="run_task",               probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"},
-         label="ecs:RunTask [WRITE PROBE]"),
-    dict(service="ecs", client="ecs", method="stop_task",              probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "task": "__awsrecon_probe__"},
-         label="ecs:StopTask [WRITE PROBE]"),
-    dict(service="ecs", client="ecs", method="update_service",         probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "service": "__awsrecon_probe__"},
-         label="ecs:UpdateService [WRITE PROBE]"),
+    # -- ECS: write probes --
+    dict(service="ecs", client="ecs", method="run_task", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"}, label="ecs:RunTask [WRITE PROBE]"),
+    dict(service="ecs", client="ecs", method="stop_task", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "task": "__awsrecon_probe__"}, label="ecs:StopTask [WRITE PROBE]"),
+    dict(service="ecs", client="ecs", method="update_service", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "service": "__awsrecon_probe__"}, label="ecs:UpdateService [WRITE PROBE]"),
     dict(service="ecs", client="ecs", method="register_task_definition", probe=True, write=True,
-         kwargs={"family": "__awsrecon_probe__", "containerDefinitions": []},
-         label="ecs:RegisterTaskDefinition [WRITE PROBE]"),
+         kwargs={"family": "__awsrecon_probe__", "containerDefinitions": []}, label="ecs:RegisterTaskDefinition [WRITE PROBE]"),
     dict(service="ecs", client="ecs", method="update_container_instances_state", probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "containerInstances": ["__awsrecon_probe__"], "status": "DRAINING"},
-         label="ecs:UpdateContainerInstancesState [WRITE PROBE]"),
-    dict(service="ecs", client="ecs", method="create_service",         probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "serviceName": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"},
-         label="ecs:CreateService [WRITE PROBE]"),
-    dict(service="ecs", client="ecs", method="delete_service",         probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "service": "__awsrecon_probe__"},
-         label="ecs:DeleteService [WRITE PROBE]"),
-    dict(service="ecs", client="ecs", method="execute_command",        probe=True, write=True,
-         kwargs={"cluster": "__awsrecon_probe__", "command": "id", "interactive": False, "task": "__awsrecon_probe__"},
-         label="ecs:ExecuteCommand [WRITE PROBE]"),
+         kwargs={"cluster": "__awsrecon_probe__", "containerInstances": ["__awsrecon_probe__"], "status": "DRAINING"}, label="ecs:UpdateContainerInstancesState [WRITE PROBE]"),
+    dict(service="ecs", client="ecs", method="create_service", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "serviceName": "__awsrecon_probe__", "taskDefinition": "__awsrecon_probe__"}, label="ecs:CreateService [WRITE PROBE]"),
+    dict(service="ecs", client="ecs", method="delete_service", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "service": "__awsrecon_probe__"}, label="ecs:DeleteService [WRITE PROBE]"),
+    dict(service="ecs", client="ecs", method="execute_command", probe=True, write=True,
+         kwargs={"cluster": "__awsrecon_probe__", "command": "id", "interactive": False, "task": "__awsrecon_probe__"}, label="ecs:ExecuteCommand [WRITE PROBE]"),
     dict(service="ecs", client="ecs", method="deregister_task_definition", probe=True, write=True,
-         kwargs={"taskDefinition": "__awsrecon_probe__:1"},
-         label="ecs:DeregisterTaskDefinition [WRITE PROBE]"),
+         kwargs={"taskDefinition": "__awsrecon_probe__:1"}, label="ecs:DeregisterTaskDefinition [WRITE PROBE]"),
 
-    # ── EC2: additional reads ────────────────────────────────────────────────
-    dict(service="ec2", client="ec2", method="describe_route_tables",              key="RouteTables",                    paginate=True),
-    dict(service="ec2", client="ec2", method="describe_internet_gateways",         key="InternetGateways",               paginate=True),
-    dict(service="ec2", client="ec2", method="describe_network_interfaces",        key="NetworkInterfaces",              paginate=True),
+    # -- EC2: additional reads --
+    dict(service="ec2", client="ec2", method="describe_route_tables", key="RouteTables", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_internet_gateways", key="InternetGateways", paginate=True),
+    dict(service="ec2", client="ec2", method="describe_network_interfaces", key="NetworkInterfaces", paginate=True),
     dict(service="ec2", client="ec2", method="describe_iam_instance_profile_associations", key="IamInstanceProfileAssociations", paginate=True),
 
-    # ── EC2: write probes (DryRun=True is natively safe) ────────────────────
-    dict(service="ec2", client="ec2", method="run_instances",          probe=True, write=True,
-         kwargs={"DryRun": True, "MinCount": 1, "MaxCount": 1, "ImageId": "ami-00000000000000001"},
-         label="ec2:RunInstances [WRITE PROBE]"),
-    dict(service="ec2", client="ec2", method="terminate_instances",    probe=True, write=True,
-         kwargs={"DryRun": True, "InstanceIds": ["i-00000000000000000"]},
-         label="ec2:TerminateInstances [WRITE PROBE]"),
-    dict(service="ec2", client="ec2", method="create_security_group",  probe=True, write=True,
-         kwargs={"DryRun": True, "GroupName": "__awsrecon_probe__", "Description": "__awsrecon_probe__"},
-         label="ec2:CreateSecurityGroup [WRITE PROBE]"),
+    # -- EC2: write probes (DryRun=True is natively safe) --
+    dict(service="ec2", client="ec2", method="run_instances", probe=True, write=True,
+         kwargs={"DryRun": True, "MinCount": 1, "MaxCount": 1, "ImageId": "ami-00000000000000001"}, label="ec2:RunInstances [WRITE PROBE]"),
+    dict(service="ec2", client="ec2", method="terminate_instances", probe=True, write=True,
+         kwargs={"DryRun": True, "InstanceIds": ["i-00000000000000000"]}, label="ec2:TerminateInstances [WRITE PROBE]"),
+    dict(service="ec2", client="ec2", method="create_security_group", probe=True, write=True,
+         kwargs={"DryRun": True, "GroupName": "__awsrecon_probe__", "Description": "__awsrecon_probe__"}, label="ec2:CreateSecurityGroup [WRITE PROBE]"),
     dict(service="ec2", client="ec2", method="authorize_security_group_ingress", probe=True, write=True,
          kwargs={"DryRun": True, "GroupId": "sg-00000000000000000",
                  "IpPermissions": [{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]},
          label="ec2:AuthorizeSecurityGroupIngress [WRITE PROBE]"),
-    dict(service="ec2", client="ec2", method="create_snapshot",        probe=True, write=True,
-         kwargs={"DryRun": True, "VolumeId": "vol-00000000000000000"},
-         label="ec2:CreateSnapshot [WRITE PROBE]"),
-    dict(service="ec2", client="ec2", method="create_key_pair",        probe=True, write=True,
-         kwargs={"DryRun": True, "KeyName": "__awsrecon_probe__"},
-         label="ec2:CreateKeyPair [WRITE PROBE]"),
+    dict(service="ec2", client="ec2", method="create_snapshot", probe=True, write=True,
+         kwargs={"DryRun": True, "VolumeId": "vol-00000000000000000"}, label="ec2:CreateSnapshot [WRITE PROBE]"),
+    dict(service="ec2", client="ec2", method="create_key_pair", probe=True, write=True,
+         kwargs={"DryRun": True, "KeyName": "__awsrecon_probe__"}, label="ec2:CreateKeyPair [WRITE PROBE]"),
     dict(service="ec2", client="ec2", method="modify_instance_attribute", probe=True, write=True,
-         kwargs={"DryRun": True, "InstanceId": "i-00000000000000000"},
-         label="ec2:ModifyInstanceAttribute [WRITE PROBE]"),
+         kwargs={"DryRun": True, "InstanceId": "i-00000000000000000"}, label="ec2:ModifyInstanceAttribute [WRITE PROBE]"),
 
-    # ── Lambda: additional reads ─────────────────────────────────────────────
+    # -- Lambda: additional reads --
     dict(service="lambda", client="lambda", method="list_event_source_mappings", key="EventSourceMappings", paginate=True),
-    dict(service="lambda", client="lambda", method="list_layers",                key="Layers",             paginate=True),
+    dict(service="lambda", client="lambda", method="list_layers", key="Layers", paginate=True),
     dict(service="lambda", client="lambda", method="list_aliases", key="Aliases", paginate=True,
-         kwargs={"FunctionName": "__awsrecon_probe__"}, probe=True,
-         label="lambda:ListAliases [READ PROBE]"),
+         kwargs={"FunctionName": "__awsrecon_probe__"}, probe=True, label="lambda:ListAliases [READ PROBE]"),
 
-    # ── Lambda: write probes ─────────────────────────────────────────────────
-    dict(service="lambda", client="lambda", method="update_function_code",          probe=True, write=True,
-         kwargs={"FunctionName": "awsrecon-probe-nonexistent"},
-         label="lambda:UpdateFunctionCode [WRITE PROBE]"),
+    # -- Lambda: write probes --
+    dict(service="lambda", client="lambda", method="update_function_code", probe=True, write=True,
+         kwargs={"FunctionName": "awsrecon-probe-nonexistent"}, label="lambda:UpdateFunctionCode [WRITE PROBE]"),
     dict(service="lambda", client="lambda", method="update_function_configuration", probe=True, write=True,
-         kwargs={"FunctionName": "awsrecon-probe-nonexistent"},
-         label="lambda:UpdateFunctionConfiguration [WRITE PROBE]"),
-    dict(service="lambda", client="lambda", method="add_permission",               probe=True, write=True,
+         kwargs={"FunctionName": "awsrecon-probe-nonexistent"}, label="lambda:UpdateFunctionConfiguration [WRITE PROBE]"),
+    dict(service="lambda", client="lambda", method="add_permission", probe=True, write=True,
          kwargs={"FunctionName": "awsrecon-probe-nonexistent", "StatementId": "probe", "Action": "lambda:InvokeFunction", "Principal": "s3.amazonaws.com"},
          label="lambda:AddPermission [WRITE PROBE]"),
-    dict(service="lambda", client="lambda", method="invoke",                       probe=True, write=True,
-         kwargs={"FunctionName": "awsrecon-probe-nonexistent"},
-         label="lambda:InvokeFunction [WRITE PROBE]"),
-    dict(service="lambda", client="lambda", method="delete_function",              probe=True, write=True,
-         kwargs={"FunctionName": "awsrecon-probe-nonexistent"},
-         label="lambda:DeleteFunction [WRITE PROBE]"),
+    dict(service="lambda", client="lambda", method="invoke", probe=True, write=True,
+         kwargs={"FunctionName": "awsrecon-probe-nonexistent"}, label="lambda:InvokeFunction [WRITE PROBE]"),
+    dict(service="lambda", client="lambda", method="delete_function", probe=True, write=True,
+         kwargs={"FunctionName": "awsrecon-probe-nonexistent"}, label="lambda:DeleteFunction [WRITE PROBE]"),
 
-    # ── IAM: additional reads ────────────────────────────────────────────────
-    dict(service="iam", client="iam", method="list_attached_user_policies", key="AttachedPolicies",
-         global_svc=True, paginate=True, probe=True,
-         kwargs={"UserName": "__awsrecon_probe__"},
-         label="IAM ListAttachedUserPolicies [READ PROBE]"),
-    dict(service="iam", client="iam", method="list_attached_role_policies", key="AttachedPolicies",
-         global_svc=True, paginate=True, probe=True,
-         kwargs={"RoleName": "__awsrecon_probe__"},
-         label="IAM ListAttachedRolePolicies [READ PROBE]"),
-    dict(service="iam", client="iam", method="list_role_policies", key="PolicyNames",
-         global_svc=True, paginate=True, probe=True,
-         kwargs={"RoleName": "__awsrecon_probe__"},
-         label="IAM ListRolePolicies [READ PROBE]"),
-    dict(service="iam", client="iam", method="get_role", key=None,
-         global_svc=True, probe=True,
-         kwargs={"RoleName": "__awsrecon_probe__"},
-         label="IAM GetRole [READ PROBE]"),
+    # -- IAM: additional reads --
+    dict(service="iam", client="iam", method="list_attached_user_policies", key="AttachedPolicies", global_svc=True, paginate=True, probe=True,
+         kwargs={"UserName": "__awsrecon_probe__"}, label="IAM ListAttachedUserPolicies [READ PROBE]"),
+    dict(service="iam", client="iam", method="list_attached_role_policies", key="AttachedPolicies", global_svc=True, paginate=True, probe=True,
+         kwargs={"RoleName": "__awsrecon_probe__"}, label="IAM ListAttachedRolePolicies [READ PROBE]"),
+    dict(service="iam", client="iam", method="list_role_policies", key="PolicyNames", global_svc=True, paginate=True, probe=True,
+         kwargs={"RoleName": "__awsrecon_probe__"}, label="IAM ListRolePolicies [READ PROBE]"),
+    dict(service="iam", client="iam", method="get_role", key=None, global_svc=True, probe=True,
+         kwargs={"RoleName": "__awsrecon_probe__"}, label="IAM GetRole [READ PROBE]"),
+    dict(service="iam", client="iam", method="get_role_policy", key=None, global_svc=True, probe=True,
+         kwargs={"RoleName": "__awsrecon_probe__", "PolicyName": "__awsrecon_probe__"}, label="IAM GetRolePolicy [READ PROBE]"),
 
-    # ── IAM: write probes ────────────────────────────────────────────────────
-    dict(service="iam", client="iam", method="create_user",           probe=True, write=True, global_svc=True,
-         kwargs={"UserName": "a" * 129},
-         label="iam:CreateUser [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="create_role",           probe=True, write=True, global_svc=True,
-         kwargs={"RoleName": "a" * 129, "AssumeRolePolicyDocument": "{}"},
-         label="iam:CreateRole [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="attach_user_policy",    probe=True, write=True, global_svc=True,
-         kwargs={"UserName": "__awsrecon_probe__", "PolicyArn": "arn:aws:iam::000000000000:policy/probe"},
-         label="iam:AttachUserPolicy [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="attach_role_policy",    probe=True, write=True, global_svc=True,
-         kwargs={"RoleName": "__awsrecon_probe__", "PolicyArn": "arn:aws:iam::000000000000:policy/probe"},
-         label="iam:AttachRolePolicy [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="put_user_policy",       probe=True, write=True, global_svc=True,
-         kwargs={"UserName": "__awsrecon_probe__", "PolicyName": "probe", "PolicyDocument": "{}"},
-         label="iam:PutUserPolicy [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="create_policy",         probe=True, write=True, global_svc=True,
-         kwargs={"PolicyName": "a" * 129, "PolicyDocument": "{}"},
-         label="iam:CreatePolicy [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="add_user_to_group",     probe=True, write=True, global_svc=True,
-         kwargs={"GroupName": "__awsrecon_probe__", "UserName": "__awsrecon_probe__"},
-         label="iam:AddUserToGroup [WRITE PROBE]"),
-    dict(service="iam", client="iam", method="create_login_profile",  probe=True, write=True, global_svc=True,
-         kwargs={"UserName": "__awsrecon_probe__", "Password": "Probe@123!"},
-         label="iam:CreateLoginProfile [WRITE PROBE]"),
+    # -- IAM: write probes --
+    dict(service="iam", client="iam", method="create_user", probe=True, write=True, global_svc=True,
+         kwargs={"UserName": "a" * 129}, label="iam:CreateUser [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="create_role", probe=True, write=True, global_svc=True,
+         kwargs={"RoleName": "a" * 129, "AssumeRolePolicyDocument": "{}"}, label="iam:CreateRole [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="attach_user_policy", probe=True, write=True, global_svc=True,
+         kwargs={"UserName": "__awsrecon_probe__", "PolicyArn": "arn:aws:iam::000000000000:policy/probe"}, label="iam:AttachUserPolicy [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="attach_role_policy", probe=True, write=True, global_svc=True,
+         kwargs={"RoleName": "__awsrecon_probe__", "PolicyArn": "arn:aws:iam::000000000000:policy/probe"}, label="iam:AttachRolePolicy [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="put_user_policy", probe=True, write=True, global_svc=True,
+         kwargs={"UserName": "__awsrecon_probe__", "PolicyName": "probe", "PolicyDocument": "{}"}, label="iam:PutUserPolicy [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="create_policy", probe=True, write=True, global_svc=True,
+         kwargs={"PolicyName": "a" * 129, "PolicyDocument": "{}"}, label="iam:CreatePolicy [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="add_user_to_group", probe=True, write=True, global_svc=True,
+         kwargs={"GroupName": "__awsrecon_probe__", "UserName": "__awsrecon_probe__"}, label="iam:AddUserToGroup [WRITE PROBE]"),
+    dict(service="iam", client="iam", method="create_login_profile", probe=True, write=True, global_svc=True,
+         kwargs={"UserName": "__awsrecon_probe__", "Password": "Probe@123!"}, label="iam:CreateLoginProfile [WRITE PROBE]"),
     dict(service="iam", client="iam", method="update_assume_role_policy", probe=True, write=True, global_svc=True,
-         kwargs={"RoleName": "__awsrecon_probe__", "PolicyDocument": "{}"},
-         label="iam:UpdateAssumeRolePolicy [WRITE PROBE]"),
+         kwargs={"RoleName": "__awsrecon_probe__", "PolicyDocument": "{}"}, label="iam:UpdateAssumeRolePolicy [WRITE PROBE]"),
 
-    # ── S3: write probes (use nonexistent bucket → NoSuchBucket before any action) ──
-    dict(service="s3", client="s3", method="put_bucket_policy",       probe=True, write=True, global_svc=True,
-         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "Policy": "{}"},
-         label="s3:PutBucketPolicy [WRITE PROBE]"),
-    dict(service="s3", client="s3", method="put_bucket_acl",          probe=True, write=True, global_svc=True,
-         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "ACL": "private"},
-         label="s3:PutBucketAcl [WRITE PROBE]"),
-    dict(service="s3", client="s3", method="delete_bucket",           probe=True, write=True, global_svc=True,
-         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__"},
-         label="s3:DeleteBucket [WRITE PROBE]"),
-    dict(service="s3", client="s3", method="put_object",              probe=True, write=True, global_svc=True,
-         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "Key": "probe", "Body": b""},
-         label="s3:PutObject [WRITE PROBE]"),
+    # -- S3: write probes (use nonexistent bucket -> NoSuchBucket before any action) --
+    dict(service="s3", client="s3", method="put_bucket_policy", probe=True, write=True, global_svc=True,
+         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "Policy": "{}"}, label="s3:PutBucketPolicy [WRITE PROBE]"),
+    dict(service="s3", client="s3", method="put_bucket_acl", probe=True, write=True, global_svc=True,
+         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "ACL": "private"}, label="s3:PutBucketAcl [WRITE PROBE]"),
+    dict(service="s3", client="s3", method="delete_bucket", probe=True, write=True, global_svc=True,
+         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__"}, label="s3:DeleteBucket [WRITE PROBE]"),
+    dict(service="s3", client="s3", method="put_object", probe=True, write=True, global_svc=True,
+         kwargs={"Bucket": "__awsrecon-probe-bucket-nonexistent__", "Key": "probe", "Body": b""}, label="s3:PutObject [WRITE PROBE]"),
 
-    # ── RDS: additional reads ────────────────────────────────────────────────
-    dict(service="rds", client="rds", method="describe_db_subnet_groups",    key="DBSubnetGroups",    paginate=True),
+    # -- RDS: additional reads --
+    dict(service="rds", client="rds", method="describe_db_subnet_groups", key="DBSubnetGroups", paginate=True),
     dict(service="rds", client="rds", method="describe_db_parameter_groups", key="DBParameterGroups", paginate=True),
-    dict(service="rds", client="rds", method="describe_db_snapshots",        key="DBSnapshots",       paginate=True),
+    dict(service="rds", client="rds", method="describe_db_snapshots", key="DBSnapshots", paginate=True),
 
-    # ── RDS: write probes ────────────────────────────────────────────────────
-    dict(service="rds", client="rds", method="modify_db_instance",    probe=True, write=True,
-         kwargs={"DBInstanceIdentifier": "__awsrecon_probe__"},
-         label="rds:ModifyDBInstance [WRITE PROBE]"),
-    dict(service="rds", client="rds", method="delete_db_instance",    probe=True, write=True,
-         kwargs={"DBInstanceIdentifier": "__awsrecon_probe__", "SkipFinalSnapshot": True},
-         label="rds:DeleteDBInstance [WRITE PROBE]"),
+    # -- RDS: write probes --
+    dict(service="rds", client="rds", method="modify_db_instance", probe=True, write=True,
+         kwargs={"DBInstanceIdentifier": "__awsrecon_probe__"}, label="rds:ModifyDBInstance [WRITE PROBE]"),
+    dict(service="rds", client="rds", method="delete_db_instance", probe=True, write=True,
+         kwargs={"DBInstanceIdentifier": "__awsrecon_probe__", "SkipFinalSnapshot": True}, label="rds:DeleteDBInstance [WRITE PROBE]"),
+    dict(service="rds", client="rds", method="restore_db_instance_from_db_snapshot", probe=True, write=True,
+         kwargs={"DBInstanceIdentifier": "awsrecon-probe-nonexistent", "DBSnapshotIdentifier": "__awsrecon_probe__"},
+         label="rds:RestoreDBInstanceFromDBSnapshot [WRITE PROBE]"),
 
-    # ── DynamoDB: additional reads + write probes ────────────────────────────
+    # -- DynamoDB: additional reads + write probes --
     dict(service="dynamodb", client="dynamodb", method="list_global_tables", key="GlobalTables"),
-    dict(service="dynamodb", client="dynamodb", method="put_item",           probe=True, write=True,
-         kwargs={"TableName": "__awsrecon_probe__", "Item": {}},
-         label="dynamodb:PutItem [WRITE PROBE]"),
-    dict(service="dynamodb", client="dynamodb", method="delete_table",       probe=True, write=True,
-         kwargs={"TableName": "__awsrecon_probe__"},
-         label="dynamodb:DeleteTable [WRITE PROBE]"),
+    dict(service="dynamodb", client="dynamodb", method="put_item", probe=True, write=True,
+         kwargs={"TableName": "__awsrecon_probe__", "Item": {}}, label="dynamodb:PutItem [WRITE PROBE]"),
+    dict(service="dynamodb", client="dynamodb", method="delete_table", probe=True, write=True,
+         kwargs={"TableName": "__awsrecon_probe__"}, label="dynamodb:DeleteTable [WRITE PROBE]"),
 
-    # ── SSM: additional reads + write probes ─────────────────────────────────
-    dict(service="ssm", client="ssm", method="describe_instance_information", key="InstanceInformationList", paginate=True,
-         label="SSM Managed Instances"),
-    dict(service="ssm", client="ssm", method="list_documents",               key="DocumentIdentifiers",    paginate=True,
+    # -- SSM: additional reads + write probes --
+    dict(service="ssm", client="ssm", method="describe_instance_information", key="InstanceInformationList", paginate=True, label="SSM Managed Instances"),
+    dict(service="ssm", client="ssm", method="list_documents", key="DocumentIdentifiers", paginate=True,
          kwargs={"Filters": [{"Key": "Owner", "Values": ["Self"]}]}),
-    dict(service="ssm", client="ssm", method="send_command",                 probe=True, write=True,
-         kwargs={"InstanceIds": ["i-00000000000000000"], "DocumentName": "AWS-RunShellScript", "Parameters": {"commands": ["id"]}},
-         label="ssm:SendCommand [WRITE PROBE]"),
-    dict(service="ssm", client="ssm", method="put_parameter",                probe=True, write=True,
-         kwargs={"Name": "/__awsrecon_probe__/probe", "Value": "probe",
-                 "Type": "SecureString", "KeyId": "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000"},
+    dict(service="ssm", client="ssm", method="send_command", probe=True, write=True,
+         kwargs={"InstanceIds": ["i-00000000000000000"], "DocumentName": "AWS-RunShellScript", "Parameters": {"commands": ["id"]}}, label="ssm:SendCommand [WRITE PROBE]"),
+    dict(service="ssm", client="ssm", method="put_parameter", probe=True, write=True,
+         kwargs={"Name": "/__awsrecon_probe__/probe", "Value": "probe", "Type": "SecureString",
+                 "KeyId": "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000"},
          label="ssm:PutParameter [WRITE PROBE]"),
 
-    # ── Secrets Manager: write probes ────────────────────────────────────────
-    dict(service="secretsmanager", client="secretsmanager", method="put_secret_value",  probe=True, write=True,
-         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"},
-         label="secretsmanager:PutSecretValue [WRITE PROBE]"),
-    dict(service="secretsmanager", client="secretsmanager", method="delete_secret",     probe=True, write=True,
-         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"},
-         label="secretsmanager:DeleteSecret [WRITE PROBE]"),
-    dict(service="secretsmanager", client="secretsmanager", method="get_secret_value",  probe=True,
-         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"},
-         label="secretsmanager:GetSecretValue [READ PROBE]"),
+    # -- Secrets Manager: write probes --
+    dict(service="secretsmanager", client="secretsmanager", method="put_secret_value", probe=True, write=True,
+         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"}, label="secretsmanager:PutSecretValue [WRITE PROBE]"),
+    dict(service="secretsmanager", client="secretsmanager", method="delete_secret", probe=True, write=True,
+         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"}, label="secretsmanager:DeleteSecret [WRITE PROBE]"),
+    dict(service="secretsmanager", client="secretsmanager", method="get_secret_value", probe=True,
+         kwargs={"SecretId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:probe"}, label="secretsmanager:GetSecretValue [READ PROBE]"),
 
-    # ── KMS: additional reads + write probes ─────────────────────────────────
+    # -- KMS: additional reads + write probes --
     dict(service="kms", client="kms", method="list_aliases", key="Aliases", paginate=True),
     dict(service="kms", client="kms", method="schedule_key_deletion", probe=True, write=True,
-         kwargs={"KeyId": "00000000-0000-0000-0000-000000000000", "PendingWindowInDays": 30},
-         label="kms:ScheduleKeyDeletion [WRITE PROBE]"),
-    dict(service="kms", client="kms", method="put_key_policy",         probe=True, write=True,
-         kwargs={"KeyId": "00000000-0000-0000-0000-000000000000", "PolicyName": "default", "Policy": "{}"},
-         label="kms:PutKeyPolicy [WRITE PROBE]"),
+         kwargs={"KeyId": "00000000-0000-0000-0000-000000000000", "PendingWindowInDays": 30}, label="kms:ScheduleKeyDeletion [WRITE PROBE]"),
+    dict(service="kms", client="kms", method="put_key_policy", probe=True, write=True,
+         kwargs={"KeyId": "00000000-0000-0000-0000-000000000000", "PolicyName": "default", "Policy": "{}"}, label="kms:PutKeyPolicy [WRITE PROBE]"),
 
-    # ── CloudFormation: write probes ─────────────────────────────────────────
+    # -- CloudFormation: write probes --
     dict(service="cloudformation", client="cloudformation", method="create_stack", probe=True, write=True,
-         kwargs={"StackName": "awsrecon-probe-stack", "TemplateBody": "a" * 51201},
-         label="cloudformation:CreateStack [WRITE PROBE]"),
+         kwargs={"StackName": "awsrecon-probe-stack", "TemplateBody": "a" * 51201}, label="cloudformation:CreateStack [WRITE PROBE]"),
     dict(service="cloudformation", client="cloudformation", method="delete_stack", probe=True, write=True,
-         kwargs={"StackName": "__awsrecon_probe__"},
-         label="cloudformation:DeleteStack [WRITE PROBE]"),
+         kwargs={"StackName": "__awsrecon_probe__"}, label="cloudformation:DeleteStack [WRITE PROBE]"),
 
-    # ── ECR: write probes ─────────────────────────────────────────────────────
-    dict(service="ecr", client="ecr", method="set_repository_policy",    probe=True, write=True,
-         kwargs={"repositoryName": "__awsrecon_probe__", "policyText": "{}"},
-         label="ecr:SetRepositoryPolicy [WRITE PROBE]"),
-    dict(service="ecr", client="ecr", method="delete_repository",         probe=True, write=True,
-         kwargs={"repositoryName": "__awsrecon_probe__"},
-         label="ecr:DeleteRepository [WRITE PROBE]"),
+    # -- ECR: write probes --
+    dict(service="ecr", client="ecr", method="set_repository_policy", probe=True, write=True,
+         kwargs={"repositoryName": "__awsrecon_probe__", "policyText": "{}"}, label="ecr:SetRepositoryPolicy [WRITE PROBE]"),
+    dict(service="ecr", client="ecr", method="delete_repository", probe=True, write=True,
+         kwargs={"repositoryName": "__awsrecon_probe__"}, label="ecr:DeleteRepository [WRITE PROBE]"),
 
-    # ── EKS: additional reads + write probes ─────────────────────────────────
-    dict(service="eks", client="eks", method="describe_cluster",          probe=True,
-         kwargs={"name": "__awsrecon_probe__"},
-         label="eks:DescribeCluster [READ PROBE]"),
-    dict(service="eks", client="eks", method="update_cluster_config",     probe=True, write=True,
-         kwargs={"name": "__awsrecon_probe__"},
-         label="eks:UpdateClusterConfig [WRITE PROBE]"),
-    dict(service="eks", client="eks", method="delete_cluster",            probe=True, write=True,
-         kwargs={"name": "__awsrecon_probe__"},
-         label="eks:DeleteCluster [WRITE PROBE]"),
+    # -- EKS: additional reads + write probes --
+    dict(service="eks", client="eks", method="describe_cluster", probe=True,
+         kwargs={"name": "__awsrecon_probe__"}, label="eks:DescribeCluster [READ PROBE]"),
+    dict(service="eks", client="eks", method="update_cluster_config", probe=True, write=True,
+         kwargs={"name": "__awsrecon_probe__"}, label="eks:UpdateClusterConfig [WRITE PROBE]"),
+    dict(service="eks", client="eks", method="delete_cluster", probe=True, write=True,
+         kwargs={"name": "__awsrecon_probe__"}, label="eks:DeleteCluster [WRITE PROBE]"),
 
-    # ── STS: write probes ─────────────────────────────────────────────────────
-    dict(service="sts", client="sts", method="assume_role",               probe=True, write=True, global_svc=True,
-         kwargs={"RoleArn": "arn:aws:iam::000000000000:role/__awsrecon_probe__", "RoleSessionName": "awsrecon_probe"},
-         label="sts:AssumeRole [WRITE PROBE]"),
+    # -- STS: write probes --
+    dict(service="sts", client="sts", method="assume_role", probe=True, write=True, global_svc=True,
+         kwargs={"RoleArn": "arn:aws:iam::000000000000:role/__awsrecon_probe__", "RoleSessionName": "awsrecon_probe"}, label="sts:AssumeRole [WRITE PROBE]"),
 
-    # ── SNS: write probes ─────────────────────────────────────────────────────
-    dict(service="sns", client="sns", method="publish",                   probe=True, write=True,
-         kwargs={"TopicArn": "arn:aws:sns:us-east-1:000000000000:probe", "Message": "probe"},
-         label="sns:Publish [WRITE PROBE]"),
-    dict(service="sns", client="sns", method="create_topic",              probe=True, write=True,
-         kwargs={"Name": "a" * 257},
-         label="sns:CreateTopic [WRITE PROBE]"),
+    # -- SNS: write probes --
+    dict(service="sns", client="sns", method="publish", probe=True, write=True,
+         kwargs={"TopicArn": "arn:aws:sns:us-east-1:000000000000:probe", "Message": "probe"}, label="sns:Publish [WRITE PROBE]"),
+    dict(service="sns", client="sns", method="create_topic", probe=True, write=True,
+         kwargs={"Name": "a" * 257}, label="sns:CreateTopic [WRITE PROBE]"),
 
-    # ── SQS: write probes ─────────────────────────────────────────────────────
-    dict(service="sqs", client="sqs", method="send_message",              probe=True, write=True,
-         kwargs={"QueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/probe", "MessageBody": "probe"},
-         label="sqs:SendMessage [WRITE PROBE]"),
-    dict(service="sqs", client="sqs", method="delete_queue",              probe=True, write=True,
-         kwargs={"QueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/probe"},
-         label="sqs:DeleteQueue [WRITE PROBE]"),
+    # -- SQS: write probes --
+    dict(service="sqs", client="sqs", method="send_message", probe=True, write=True,
+         kwargs={"QueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/probe", "MessageBody": "probe"}, label="sqs:SendMessage [WRITE PROBE]"),
+    dict(service="sqs", client="sqs", method="delete_queue", probe=True, write=True,
+         kwargs={"QueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/probe"}, label="sqs:DeleteQueue [WRITE PROBE]"),
 
-    # ── CloudWatch Logs: write probes ────────────────────────────────────────
-    dict(service="logs", client="logs", method="delete_log_group",        probe=True, write=True,
-         kwargs={"logGroupName": "__awsrecon_probe__"},
-         label="logs:DeleteLogGroup [WRITE PROBE]"),
-    dict(service="logs", client="logs", method="put_log_events",          probe=True, write=True,
-         kwargs={"logGroupName": "__awsrecon_probe__", "logStreamName": "__probe__", "logEvents": []},
-         label="logs:PutLogEvents [WRITE PROBE]"),
+    # -- CloudWatch Logs: write probes --
+    dict(service="logs", client="logs", method="delete_log_group", probe=True, write=True,
+         kwargs={"logGroupName": "__awsrecon_probe__"}, label="logs:DeleteLogGroup [WRITE PROBE]"),
+    dict(service="logs", client="logs", method="put_log_events", probe=True, write=True,
+         kwargs={"logGroupName": "__awsrecon_probe__", "logStreamName": "__probe__", "logEvents": []}, label="logs:PutLogEvents [WRITE PROBE]"),
 
-    # ── CloudTrail: write probes ──────────────────────────────────────────────
+    # -- CloudTrail: write probes --
     dict(service="cloudtrail", client="cloudtrail", method="delete_trail", probe=True, write=True,
-         kwargs={"Name": "__awsrecon_probe__"},
-         label="cloudtrail:DeleteTrail [WRITE PROBE]"),
+         kwargs={"Name": "__awsrecon_probe__"}, label="cloudtrail:DeleteTrail [WRITE PROBE]"),
     dict(service="cloudtrail", client="cloudtrail", method="stop_logging", probe=True, write=True,
-         kwargs={"Name": "__awsrecon_probe__"},
-         label="cloudtrail:StopLogging [WRITE PROBE]"),
+         kwargs={"Name": "__awsrecon_probe__"}, label="cloudtrail:StopLogging [WRITE PROBE]"),
 
     # --- Global (queried once regardless of --all-regions) ---
-    dict(service="route53", client="route53",
-         method="list_hosted_zones", key="HostedZones", global_svc=True,
-         paginate=True),
-    dict(service="cloudfront", client="cloudfront",
-         method="list_distributions", key="DistributionList",
-         nested_key="Items", global_svc=True),
-    dict(service="ses", client="ses", method="list_identities",
-         key="Identities", global_svc=True, paginate=True),
-    dict(service="organizations", client="organizations",
-         method="list_accounts", key="Accounts", global_svc=True,
-         paginate=True),
+    dict(service="route53", client="route53", method="list_hosted_zones", key="HostedZones", global_svc=True, paginate=True),
+    dict(service="cloudfront", client="cloudfront", method="list_distributions", key="DistributionList", nested_key="Items", global_svc=True),
+    dict(service="ses", client="ses", method="list_identities", key="Identities", global_svc=True, paginate=True),
+    dict(service="organizations", client="organizations", method="list_accounts", key="Accounts", global_svc=True, paginate=True),
 ]
 
 
@@ -559,15 +424,94 @@ def get_regions(session, requested):
         ec2 = session.client("ec2", region_name=session.region_name or "us-east-1")
         resp = ec2.describe_regions(AllRegions=False)
         regions = sorted(r["RegionName"] for r in resp["Regions"])
-        print(f"{C.B}    ec2:DescribeRegions succeeded — {len(regions)} regions found.{C.END}")
+        print(f"{C.B}    ec2:DescribeRegions succeeded - {len(regions)} regions found.{C.END}")
         return regions
     except Exception:
         # ec2:DescribeRegions is denied (common for restricted profiles).
         # Fall back to the hardcoded list of all known AWS regions so
         # --all-regions still works without that permission.
-        print(f"{C.Y}    ec2:DescribeRegions denied — using built-in region list "
-              f"({len(ALL_AWS_REGIONS)} regions).{C.END}")
+        print(f"{C.Y}    ec2:DescribeRegions denied - using built-in region list ({len(ALL_AWS_REGIONS)} regions).{C.END}")
         return ALL_AWS_REGIONS
+
+
+def run_dependent_check(session, client_name, method_name, kwargs, key=None, global_svc=True, region=None):
+    """
+    Like run_check, but for a call bound to a real resource ID discovered
+    in an earlier phase (e.g. ecs:ListTasks against a real cluster ARN,
+    instead of a dummy placeholder). Returns (status, count, items, err).
+    """
+    try:
+        region_kw = {} if global_svc else {"region_name": region}
+        client = session.client(client_name, **region_kw)
+        method = getattr(client, method_name)
+        resp = method(**kwargs)
+        items = [resp] if key is None else resp.get(key, [])
+        norm = [{"Name": it} if isinstance(it, str) else it for it in items]
+        return "accessible", len(norm), norm, None
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedException", "AuthorizationError"):
+            return "denied", 0, [], code
+        return "error", 0, [], f"{code}: {e.response.get('Error', {}).get('Message', '')}"
+    except Exception as e:
+        return "error", 0, [], str(e)
+
+
+def list_bucket_objects(session, bucket, max_keys=1000):
+    """
+    s3:ListObjectsV2 against one specific real bucket -- the 'aws s3 ls
+    s3://bucket/' equivalent. Tries the bucket's own region first (a
+    bucket in a different region than the client throws a redirect error
+    that boto3 resolves automatically on the next call in most cases, but
+    we pin the region explicitly to avoid a second round trip).
+    Returns (status, count, items, err) matching run_check's shape.
+    """
+    try:
+        client = session.client("s3")
+        keys = []
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, PaginationConfig={"MaxItems": max_keys}):
+            for obj in page.get("Contents", []):
+                keys.append({
+                    "Key": obj["Key"],
+                    "Size": obj.get("Size"),
+                    "LastModified": obj.get("LastModified"),
+                    "Bucket": bucket,
+                })
+        return "accessible", len(keys), keys, None
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("AccessDenied", "AccessDeniedException"):
+            return "denied", 0, [], code
+        return "error", 0, [], f"{code}: {e.response.get('Error', {}).get('Message', '')}"
+    except Exception as e:
+        return "error", 0, [], str(e)
+
+
+def download_bucket_object(session, bucket, key, dest_dir, max_bytes):
+    """
+    s3:GetObject for one object -- the 'aws s3 cp' equivalent. Skips
+    objects over max_bytes rather than silently pulling down huge files.
+    Returns (status, path_or_None, err).
+    """
+    import os
+
+    try:
+        client = session.client("s3")
+        head = client.head_object(Bucket=bucket, Key=key)
+        size = head.get("ContentLength", 0)
+        if max_bytes and size > max_bytes:
+            return "skipped", None, f"{size} bytes exceeds --max-download-size limit"
+
+        local_path = os.path.join(dest_dir, bucket, key)
+        os.makedirs(os.path.dirname(local_path) or dest_dir, exist_ok=True)
+        client.download_file(bucket, key, local_path)
+        return "downloaded", local_path, None
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        return "error", None, code
+    except Exception as e:
+        return "error", None, str(e)
 
 
 def run_check(session, check, region):
@@ -585,22 +529,21 @@ def run_check(session, check, region):
         method = getattr(client, check["method"])
 
         # --- Permission probe: call with dummy kwargs, classify by error type ---
-        # probe=True  → try the call; AccessDenied=denied, DryRunOperation/anything else=permission confirmed
-        # write=True  → label result [WRITE], else [READ]
+        # probe=True -> try the call; AccessDenied=denied, DryRunOperation/anything else=permission confirmed
+        # write=True -> label result [WRITE], else [READ]
         if check.get("probe"):
             try:
                 method(**kwargs)
                 tag = "WRITE" if check.get("write") else "READ"
-                return "accessible", 1, [{"Permission": f"[{tag}] {check['method']} — call succeeded"}], None
+                return "accessible", 1, [{"Permission": f"[{tag}] {check['method']} - call succeeded"}], None
             except ClientError as e:
                 code = e.response.get("Error", {}).get("Code", "")
-                if code in ("AccessDenied", "AccessDeniedException", "UnauthorizedOperation",
-                            "UnauthorizedException", "AuthorizationError", "AuthFailure"):
+                if code in ("AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedException", "AuthorizationError", "AuthFailure"):
                     return "denied", 0, [], code
                 if code == "DryRunOperation":
-                    return "accessible", 1, [{"Permission": f"[WRITE] {check['method']} — permission confirmed (DryRun OK)"}], None
+                    return "accessible", 1, [{"Permission": f"[WRITE] {check['method']} - permission confirmed (DryRun OK)"}], None
                 tag = "WRITE" if check.get("write") else "READ"
-                return "accessible", 1, [{"Permission": f"[{tag}] {check['method']} — permission confirmed ({code})"}], None
+                return "accessible", 1, [{"Permission": f"[{tag}] {check['method']} - permission confirmed ({code})"}], None
             except Exception as e:
                 return "error", 0, [], str(e)
 
@@ -639,14 +582,11 @@ def run_check(session, check, region):
 
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
-        if code in ("AccessDenied", "AccessDeniedException",
-                    "UnauthorizedOperation", "UnauthorizedException",
-                    "AuthorizationError"):
+        if code in ("AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedException", "AuthorizationError"):
             return "denied", 0, [], code
-        if code in ("OptInRequired", "SubscriptionRequiredException",
-                    "InvalidClientTokenId"):
+        if code in ("OptInRequired", "SubscriptionRequiredException", "InvalidClientTokenId"):
             return "na", 0, [], code
-        return "error", 0, [], f"{code}: {e.response.get('Error', {}).get('Message','')}"
+        return "error", 0, [], f"{code}: {e.response.get('Error', {}).get('Message', '')}"
     except (EndpointConnectionError,):
         return "na", 0, [], "service not available in this region"
     except BotoCoreError as e:
@@ -656,24 +596,22 @@ def run_check(session, check, region):
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Enumerate all AWS resources/services visible to a given AWS CLI profile or the default boto3 credential chain.")
-    ap.add_argument("--profile", help="AWS CLI profile name from ~/.aws/credentials + ~/.aws/config "
-                                       "(supports static keys, session-token creds, assume-role, SSO). "
-                                       "If omitted, use the default boto3 credential chain.")
-    ap.add_argument("--region", action="append",
-                     help="Region to scan (repeatable). Default: profile's default region.")
-    ap.add_argument("--all-regions", action="store_true",
-                     help="Scan every enabled region (requires ec2:DescribeRegions, else falls back).")
-    ap.add_argument("--services", help="Comma-separated list of service keys to limit the scan to "
-                                        "(e.g. s3,iam,lambda,ec2). See --list-services.")
+    ap = argparse.ArgumentParser(description="Enumerate all AWS resources/services visible to a given AWS CLI profile or the default boto3 credential chain.")
+    ap.add_argument("--profile", help="AWS CLI profile name from ~/.aws/credentials + ~/.aws/config (supports static keys, session-token creds, assume-role, SSO). If omitted, use the default boto3 credential chain.")
+    ap.add_argument("--region", action="append", help="Region to scan (repeatable). Default: profile's default region.")
+    ap.add_argument("--all-regions", action="store_true", help="Scan every enabled region (requires ec2:DescribeRegions, else falls back).")
+    ap.add_argument("--services", help="Comma-separated list of service keys to limit the scan to (e.g. s3,iam,lambda,ec2). See --list-services.")
     ap.add_argument("--threads", type=int, default=12, help="Parallel worker threads (default: 12)")
     ap.add_argument("--full", action="store_true", help="Print every resource identifier, not just a preview.")
     ap.add_argument("--json", metavar="FILE", help="Also write full results as JSON to FILE.")
     ap.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
     ap.add_argument("--quiet-denied", action="store_true", help="Hide the denied-services summary line.")
-    ap.add_argument("--list-services", action="store_true",
-                     help="List all service check keys this tool knows about, then exit.")
+    ap.add_argument("--list-services", action="store_true", help="List all service check keys this tool knows about, then exit.")
+    ap.add_argument("--no-list-objects", action="store_true", help="Skip s3:ListObjectsV2 on every accessible bucket (equivalent to 'aws s3 ls s3://bucket/'). Listing is on by default when s3 is in scope.")
+    ap.add_argument("--object-limit", type=int, default=1000, help="Max objects to list per bucket (default: 1000).")
+    ap.add_argument("--download-dir", metavar="DIR", help="Download every listed object into DIR/<bucket>/<key> (equivalent to 'aws s3 cp'). Off by default -- this performs real GetObject calls and writes real data to disk.")
+    ap.add_argument("--max-download-size", type=int, default=50, help="Skip downloading objects larger than this many MB (default: 50). Ignored if --download-dir is not set.")
+    ap.add_argument("--read-secrets", action="store_true", help="Call secretsmanager:GetSecretValue on every secret found by list_secrets. Off by default -- this retrieves real secret material, not just metadata.")
     args = ap.parse_args()
 
     if args.no_color or not sys.stdout.isatty():
@@ -699,10 +637,7 @@ def main():
     checks = [c for c in SERVICE_CHECKS if not wanted or c["service"] in wanted]
 
     # --- Step 1: confirm identity first, fail fast with a clear message ---
-    if args.profile:
-        identity_source = f"profile '{args.profile}'"
-    else:
-        identity_source = "default AWS credential chain"
+    identity_source = f"profile '{args.profile}'" if args.profile else "default AWS credential chain"
 
     print(f"{C.B}{C.BOLD}[*] Resolving identity using {identity_source}...{C.END}")
     try:
@@ -713,15 +648,13 @@ def main():
         print(f"{C.G}    UserId  : {ident['UserId']}{C.END}\n")
     except NoCredentialsError:
         if args.profile:
-            sys.exit(f"[!] No credentials found for profile '{args.profile}'. "
-                     f"Check ~/.aws/credentials.")
+            sys.exit(f"[!] No credentials found for profile '{args.profile}'. Check ~/.aws/credentials.")
         else:
             sys.exit("[!] No AWS credentials found in the default credential chain.")
     except ClientError as e:
         sys.exit(f"[!] sts:GetCallerIdentity failed -- credentials appear invalid/expired: {e}")
 
-    regions = get_regions(session, args.region) if args.all_regions or args.region else \
-        [session.region_name or "us-east-1"]
+    regions = get_regions(session, args.region) if args.all_regions or args.region else [session.region_name or "us-east-1"]
     print(f"{C.B}[*] Regions in scope: {', '.join(regions)}{C.END}")
     print(f"{C.B}[*] Running {len(checks)} service checks x {len(regions)} region(s)...{C.END}\n")
 
@@ -750,6 +683,146 @@ def main():
                 count=count, items=items, error=err,
             ))
 
+    # --- Phase 2: per-bucket object listing (+ optional download) ---
+    # list_buckets only tells you bucket *names* exist ("aws s3 ls" with no
+    # path). Actually seeing what's inside each bucket needs a separate
+    # s3:ListObjectsV2 call per bucket, since the bucket names aren't known
+    # until phase 1 finishes -- this can't be a static SERVICE_CHECKS entry.
+    if (not wanted or "s3" in wanted) and not args.no_list_objects:
+        bucket_names = []
+        for r in results:
+            if r["service"] == "s3" and r["method"] == "list_buckets" and r["status"] == "accessible":
+                bucket_names = [b.get("Name") for b in r["items"] if b.get("Name")]
+
+        if bucket_names:
+            print(f"{C.B}[*] Listing objects in {len(bucket_names)} accessible bucket(s)...{C.END}")
+
+            def obj_worker(bucket):
+                status, count, items, err = list_bucket_objects(session, bucket, args.object_limit)
+                return bucket, status, count, items, err
+
+            all_listed_objects = []  # (bucket, key) pairs for phase 3 download
+            with ThreadPoolExecutor(max_workers=args.threads) as ex:
+                futures = [ex.submit(obj_worker, b) for b in bucket_names]
+                for fut in as_completed(futures):
+                    bucket, status, count, items, err = fut.result()
+                    results.append(dict(
+                        service="s3", label=f"s3:ListObjectsV2 [{bucket}]",
+                        method="list_objects_v2", region=None, status=status,
+                        count=count, items=items, error=err,
+                    ))
+                    if status == "accessible":
+                        for it in items:
+                            all_listed_objects.append((bucket, it["Key"], it.get("Size") or 0))
+
+            # --- Phase 3: optional download (off by default -- real data access, not just enumeration) ---
+            if args.download_dir and all_listed_objects:
+                max_bytes = args.max_download_size * 1024 * 1024 if args.max_download_size else None
+                print(f"{C.B}[*] Downloading {len(all_listed_objects)} object(s) to {args.download_dir}/ "
+                      f"(skipping any over {args.max_download_size} MB)...{C.END}")
+
+                def dl_worker(bucket, key):
+                    status, path, err = download_bucket_object(session, bucket, key, args.download_dir, max_bytes)
+                    return bucket, key, status, path, err
+
+                downloaded, skipped, dl_errors = 0, 0, 0
+                with ThreadPoolExecutor(max_workers=args.threads) as ex:
+                    futures = [ex.submit(dl_worker, b, k) for b, k, _ in all_listed_objects]
+                    for fut in as_completed(futures):
+                        bucket, key, status, path, err = fut.result()
+                        if status == "downloaded":
+                            downloaded += 1
+                            print(f"{C.G}    [+] {bucket}/{key} -> {path}{C.END}")
+                        elif status == "skipped":
+                            skipped += 1
+                            print(f"{C.Y}    [~] {bucket}/{key} skipped ({err}){C.END}")
+                        else:
+                            dl_errors += 1
+                            print(f"{C.R}    [-] {bucket}/{key} failed ({err}){C.END}")
+
+                print(f"{C.BOLD}[*] Download summary: {downloaded} downloaded, {skipped} skipped, {dl_errors} failed.{C.END}\n")
+
+    # --- Phase 2b: dependent read checks against real discovered resource names ---
+    # Mirrors the S3 pattern above: several services only reveal useful detail
+    # once you already know a real resource name/ARN from an earlier check
+    # (e.g. ecs:ListTasks needs a real cluster ARN, not a dummy placeholder).
+    # The static [READ PROBE]/[WRITE PROBE] entries in SERVICE_CHECKS still run
+    # regardless (they answer "do I have this permission at all", even against
+    # zero real resources) -- these jobs are additive real enumeration.
+    dep_jobs = []  # (service, label, client, method, kwargs, key, global_svc, region)
+
+    def real_names(service, method, field="Name", region_filter=None):
+        out = []
+        for r in results:
+            if r["service"] == service and r["method"] == method and r["status"] == "accessible":
+                for it in r["items"]:
+                    val = it.get(field)
+                    if val:
+                        out.append((val, r["region"]))
+        return out
+
+    for cluster_arn, region in real_names("ecs", "list_clusters"):
+        short = cluster_arn.split("/")[-1]
+        for method, key in (("list_tasks", "taskArns"), ("list_services", "serviceArns"), ("list_container_instances", "containerInstanceArns")):
+            dep_jobs.append(("ecs", f"ecs:{method} [{short}]", "ecs", method, {"cluster": cluster_arn}, key, False, region))
+
+    for role_name, _ in real_names("iam", "list_roles", field="RoleName"):
+        dep_jobs.append(("iam", f"iam:ListAttachedRolePolicies [{role_name}]", "iam", "list_attached_role_policies", {"RoleName": role_name}, "AttachedPolicies", True, None))
+        dep_jobs.append(("iam", f"iam:ListRolePolicies [{role_name}]", "iam", "list_role_policies", {"RoleName": role_name}, "PolicyNames", True, None))
+        dep_jobs.append(("iam", f"iam:GetRole [{role_name}]", "iam", "get_role", {"RoleName": role_name}, None, True, None))
+
+    for user_name, _ in real_names("iam", "list_users", field="UserName"):
+        dep_jobs.append(("iam", f"iam:ListAttachedUserPolicies [{user_name}]", "iam", "list_attached_user_policies", {"UserName": user_name}, "AttachedPolicies", True, None))
+
+    for func_name, region in real_names("lambda", "list_functions", field="FunctionName"):
+        dep_jobs.append(("lambda", f"lambda:ListAliases [{func_name}]", "lambda", "list_aliases", {"FunctionName": func_name}, "Aliases", False, region))
+
+    for cluster_name, region in real_names("eks", "list_clusters", field="Name"):
+        dep_jobs.append(("eks", f"eks:DescribeCluster [{cluster_name}]", "eks", "describe_cluster", {"name": cluster_name}, None, False, region))
+
+    if args.read_secrets:
+        for secret_id, region in real_names("secretsmanager", "list_secrets", field="ARN"):
+            dep_jobs.append(("secretsmanager", f"secretsmanager:GetSecretValue [{secret_id.split(':')[-1]}]", "secretsmanager", "get_secret_value", {"SecretId": secret_id}, None, False, region))
+
+    if dep_jobs:
+        print(f"{C.B}[*] Running {len(dep_jobs)} dependent check(s) against real discovered resources...{C.END}")
+
+        def dep_worker(job):
+            service, label, client_name, method, kwargs, key, global_svc, region = job
+            status, count, items, err = run_dependent_check(session, client_name, method, kwargs, key=key, global_svc=global_svc, region=region)
+            return service, label, method, region, status, count, items, err
+
+        # keep list_role_policies results around so we can chase real PolicyNames -> get_role_policy
+        role_policy_lookup = {}  # role_name -> [policy_name, ...]
+
+        with ThreadPoolExecutor(max_workers=args.threads) as ex:
+            futures = [ex.submit(dep_worker, j) for j in dep_jobs]
+            for fut in as_completed(futures):
+                service, label, method, region, status, count, items, err = fut.result()
+                results.append(dict(service=service, label=label, method=method, region=region, status=status, count=count, items=items, error=err))
+                if method == "list_role_policies" and status == "accessible" and count > 0:
+                    role_name = label.split("[")[-1].rstrip("]")
+                    role_policy_lookup[role_name] = [it.get("Name") for it in items if it.get("Name")]
+
+        # --- Phase 2c: get_role_policy for every real (role, inline-policy-name) pair found above ---
+        policy_jobs = [(role, pol) for role, pols in role_policy_lookup.items() for pol in pols]
+        if policy_jobs:
+            print(f"{C.B}[*] Reading {len(policy_jobs)} inline role polic{'y' if len(policy_jobs) == 1 else 'ies'}...{C.END}")
+
+            def policy_worker(role, pol):
+                status, count, items, err = run_dependent_check(
+                    session, "iam", "get_role_policy", {"RoleName": role, "PolicyName": pol}, key=None, global_svc=True)
+                return role, pol, status, count, items, err
+
+            with ThreadPoolExecutor(max_workers=args.threads) as ex:
+                futures = [ex.submit(policy_worker, r, p) for r, p in policy_jobs]
+                for fut in as_completed(futures):
+                    role, pol, status, count, items, err = fut.result()
+                    results.append(dict(
+                        service="iam", label=f"iam:GetRolePolicy [{role}/{pol}]", method="get_role_policy",
+                        region=None, status=status, count=count, items=items, error=err,
+                    ))
+
     # --- Report ---
     accessible = [r for r in results if r["status"] == "accessible" and r["count"] > 0]
     empty_ok = [r for r in results if r["status"] == "accessible" and r["count"] == 0]
@@ -759,8 +832,7 @@ def main():
     def region_tag(r):
         return f" [{r['region']}]" if r["region"] else " [global]"
 
-    print(f"{C.BOLD}{C.G}=== ACCESSIBLE ({len(accessible)} checks returned data, "
-          f"{sum(r['count'] for r in accessible)} resources total) ==={C.END}\n")
+    print(f"{C.BOLD}{C.G}=== ACCESSIBLE ({len(accessible)} checks returned data, {sum(r['count'] for r in accessible)} resources total) ==={C.END}\n")
 
     # Build a flat SERVICE / ARN table. A service with N resources gets N
     # rows, one per ARN -- the service name repeats once per row, matching
@@ -801,8 +873,8 @@ def main():
             print(f"{C.Y}[?] {r['service']:<15} {r['label']:<32} {r['error']}{C.END}")
 
     print(f"\n{C.BOLD}Summary: {len(accessible)} with resources, {len(empty_ok)} accessible-but-empty, "
-          f"{len(set((r['service'],r['label']) for r in denied))} denied, "
-          f"{len(set((r['service'],r['label']) for r in errored))} errored/NA.{C.END}")
+          f"{len(set((r['service'], r['label']) for r in denied))} denied, "
+          f"{len(set((r['service'], r['label']) for r in errored))} errored/NA.{C.END}")
 
     if args.json:
         with open(args.json, "w") as f:
