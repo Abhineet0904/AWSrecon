@@ -656,7 +656,7 @@ def main():
 
     regions = get_regions(session, args.region) if args.all_regions or args.region else [session.region_name or "us-east-1"]
     print(f"{C.B}[*] Regions in scope: {', '.join(regions)}{C.END}")
-    print(f"{C.B}[*] Running {len(checks)} service checks x {len(regions)} region(s)...{C.END}\n")
+    print(f"{C.B}[*] Running {len(checks)} initial service checks x {len(regions)} region(s)...{C.END}\n")
 
     jobs = []
     for check in checks:
