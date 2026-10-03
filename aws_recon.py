@@ -240,6 +240,10 @@ SERVICE_CHECKS = [
     # -- IAM: additional reads --
     dict(service="iam", client="iam", method="list_attached_user_policies", key="AttachedPolicies", global_svc=True, paginate=True, probe=True,
          kwargs={"UserName": "__awsrecon_probe__"}, label="IAM ListAttachedUserPolicies [READ PROBE]"),
+    dict(service="iam", client="iam", method="list_user_policies", key="PolicyNames", global_svc=True, paginate=True, probe=True,
+         kwargs={"UserName": "__awsrecon_probe__"}, label="IAM ListUserPolicies [READ PROBE]"),
+    dict(service="iam", client="iam", method="get_user_policy", key=None, global_svc=True, paginate=True, probe=True,
+         kwargs={"UserName": "__awsrecon_probe__", "PolicyName": "__awsrecon_probe__"}, label="IAM GetUserPolicy [READ PROBE]"),
     dict(service="iam", client="iam", method="list_attached_role_policies", key="AttachedPolicies", global_svc=True, paginate=True, probe=True,
          kwargs={"RoleName": "__awsrecon_probe__"}, label="IAM ListAttachedRolePolicies [READ PROBE]"),
     dict(service="iam", client="iam", method="list_role_policies", key="PolicyNames", global_svc=True, paginate=True, probe=True,
