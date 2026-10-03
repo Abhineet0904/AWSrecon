@@ -62,7 +62,7 @@ ARN_KEYS = [
     "DomainArn", "PipelineArn", "ProjectArn",
 ]
 NAME_KEYS = [
-    "Name", "name", "FunctionName", "TableName", "BucketName", "GroupName",
+    "PolicyActions", "Name", "name", "FunctionName", "TableName", "BucketName", "GroupName",
     "UserName", "RoleName", "PolicyName", "DBSnapshotIdentifier", "DBInstanceIdentifier",
     "ClusterName", "ClusterIdentifier", "QueueUrl", "TopicArn", "KeyId",
     "SecretId", "StackName", "DomainName", "Id", "InstanceId", "VpcId",
@@ -79,6 +79,33 @@ def first_present(d, keys):
         if isinstance(d, dict) and d.get(k):
             return d[k]
     return None
+
+
+def summarize_policy_actions(policy_document):
+    """
+    Flatten an inline/managed policy document's Statement(s) into a single
+    deduplicated, readable string of Actions -- e.g. 'iam:PassRole, glue:CreateJob,
+    glue:StartJobRun'. Returns None if the document doesn't look like a policy.
+    Used to surface GetRolePolicy/GetUserPolicy results in the console table
+    instead of them just re-printing the parent user/role name.
+    """
+    if not isinstance(policy_document, dict):
+        return None
+    stmts = policy_document.get("Statement")
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+    if not isinstance(stmts, list):
+        return None
+    seen = []
+    for s in stmts:
+        if not isinstance(s, dict):
+            continue
+        action = s.get("Action")
+        values = [action] if isinstance(action, str) else action if isinstance(action, list) else []
+        for a in values:
+            if a not in seen:
+                seen.append(a)
+    return ", ".join(seen) if seen else None
 
 
 def extract_identity(item):
@@ -828,6 +855,10 @@ def main():
                 futures = [ex.submit(policy_worker, r, p) for r, p in policy_jobs]
                 for fut in as_completed(futures):
                     role, pol, status, count, items, err = fut.result()
+                    if status == "accessible" and items and isinstance(items[0], dict) and "PolicyDocument" in items[0]:
+                        actions = summarize_policy_actions(items[0]["PolicyDocument"])
+                        if actions:
+                            items[0]["PolicyActions"] = f"[{pol}] {actions}"
                     results.append(dict(
                         service="iam", label=f"iam:GetRolePolicy [{role}/{pol}]", method="get_role_policy",
                         region=None, status=status, count=count, items=items, error=err,
@@ -847,6 +878,10 @@ def main():
                 futures = [ex.submit(user_policy_worker, u, p) for u, p in user_policy_jobs]
                 for fut in as_completed(futures):
                     user, pol, status, count, items, err = fut.result()
+                    if status == "accessible" and items and isinstance(items[0], dict) and "PolicyDocument" in items[0]:
+                        actions = summarize_policy_actions(items[0]["PolicyDocument"])
+                        if actions:
+                            items[0]["PolicyActions"] = f"[{pol}] {actions}"
                     results.append(dict(
                         service="iam", label=f"iam:GetUserPolicy [{user}/{pol}]", method="get_user_policy",
                         region=None, status=status, count=count, items=items, error=err,
